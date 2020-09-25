@@ -1,0 +1,94 @@
+HOWTO collect flow label statistics
+===================================
+
+0. Configuration
+----------------
+
+Useful configuration options:
+
+Number of bins to collect flow label statistics:
+- change the BINBASE value in defines.h (mind this is not the number of bins,
+		but the number of bins is computed as 2^BINBASE)
+
+Unfortunately, the software must be re-compiled every time this parameter 
+changes.
+
+
+1. Compile the software
+-----------------------
+
+There are two software tools:
+a) an eBPF program that must be attached to the tc subsystem;
+b) a user-space program that collects statistics and prints
+   them at given intervals.
+
+Prerequisite: libbpf installed (both static and dynamic 
+libraries) in known paths.
+
+Compile: just type make and cross your fingers! ;-)
+
+2. Attach the ebpf program
+--------------------------
+
+Create a specific qdisc in the system and attach the ebpf program.
+
+# sudo tc qdisc add dev eth0 clsact
+# sudo tc filter add dev eth0 egress bpf da obj tc_fl_kern.o sec tc_flowlabel_stats
+
+The system is now collecting statistics about flow labels seen in IPv6 packets.
+
+Note: The above instruction only monitors outgoing packets. To monitor incoming
+traffic:
+
+# sudo tc filter add dev eth0 ingress bpf da obj tc_fl_kern.o sec tc_flowlabel_stats
+
+Note: the current software version creates two separate data structures for
+collecting info of packets going in the two directions. This means two 
+separate user-space program instances must be run in parallel if one wants to
+monitor both incoming and outgoing statistics. The following instructions 
+only monitors outgoing packets. Duplicate all elements if you want to monitor
+both incoming and outgoing packets. 
+
+3. Pin the ebpf map to make them available to user space program
+----------------------------------------------------------------
+
+Retrieve the id of the map associated to the ebpf program:
+
+% sudo bpftool map show
+
+Note: you may want to run this command before and after attaching the
+ebpf program; the additional map is the one created by the tc command
+when loading the ebpf program.
+
+Pin the map to the ebpf filesystem:
+
+% sudo bpftool map pin id <id> <bpffs name>
+
+where:
+<id> is the id retrieved by the map list command
+<bpffs name> is the file name chosen to pin the map (suggestion:
+		/sys/fs/bpf/tc/globals/tc_stats)
+
+4. Run the user-space program
+-----------------------------
+
+The user space program can be run with the following options:
+
+% sudo ./tc_fl_user -f <pinned file name> -i <interval> -q|v
+
+Usage: ./tc_fl_user [options]
+
+where options can be:
+-f <filename>: pinned filename for the map
+-i <interval>: reporting period in sec [default=1s; 0=print once and exit]
+q|v: quiet/verbose mode [default to: verbose]
+
+5. Stop and clean 
+-----------------
+
+^C will stop the user-space program.
+
+To unload BPF programs from TC:
+
+# sudo tc filter del dev eth0 egress
+[# sudo tc filter del dev eth0 ingress]
